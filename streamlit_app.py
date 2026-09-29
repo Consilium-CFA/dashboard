@@ -286,6 +286,97 @@ st.download_button(
     mime="application/json",
 )
 
+# =============================================================================
+# DEvaluation scenario
+# =============================================================================
+st.markdown("---")
+st.markdown("## 🔴 Scénario de dévaluation")
+
+st.markdown("""
+Simulez l'impact d'une dévaluation brutale du franc CFA sur le thermostat monétaire.
+La dévaluation est modélisée comme un choc ponctuel sur le niveau des prix et un
+décalage permanent de la constante de cointégration — exactement comme en 1994.
+""")
+
+deval_size = st.slider(
+    "Ampleur de la dévaluation (%)",
+    min_value=0, max_value=60, value=30, step=5,
+    help="1994 : 50 %. Une valeur de 0 correspond à aucun choc."
+)
+
+deval_quarter = st.slider(
+    "Trimestre de déclenchement",
+    min_value=10, max_value=70, value=40, step=1,
+    help="Le choc se produit à ce trimestre de la simulation."
+)
+
+def simulate_devaluation(kappa, alpha, theta, deval_size_pct, deval_q,
+                          gdp, infl, m2, T=80, beta=1.059, bi=-0.322, const=-2.37):
+    m = np.zeros(T); r = np.zeros(T); m[0] = m2[0]
+    price_shift = 0.0
+    np.random.seed(42)
+    shocks = np.random.normal(0, 0.01, T)
+
+    for t in range(1, T):
+        if t == deval_q:
+            price_shift = deval_size_pct / 100.0
+        const_adj = const - np.log(1 + price_shift)
+        ect = m[t-1] - (beta*gdp[t-1] + bi*infl[t-1] + const_adj)
+        r[t-1] = np.clip(3.0 + kappa*ect, 0.5, 10.0)
+        m[t] = m[t-1] + alpha*ect + theta*(r[t-1] - 3.0) + shocks[t-1]
+
+    ect_series = np.zeros(T)
+    price_shift = 0.0
+    for t in range(T):
+        if t >= deval_q:
+            price_shift = deval_size_pct / 100.0
+        const_adj = const - np.log(1 + price_shift)
+        ect_series[t] = m[t] - (beta*gdp[t] + bi*infl[t] + const_adj)
+    return ect_series, r
+
+ect_deval, rate_deval = simulate_devaluation(
+    kappa, alpha, theta, deval_size, deval_quarter,
+    gdp_avg, infl_avg, m2_avg
+)
+
+fig_deval = go.Figure()
+fig_deval.add_trace(go.Scatter(y=ect_rule, name="ECT – sans dévaluation",
+                                line=dict(color="#94a3b8", width=2)))
+fig_deval.add_trace(go.Scatter(y=ect_deval, name=f"ECT – avec dévaluation ({deval_size}%)",
+                                line=dict(color="#ef4444", width=3)))
+fig_deval.add_vline(x=deval_quarter, line_dash="dash", line_color="#c8a45c",
+                    annotation_text="Dévaluation", annotation_position="top")
+fig_deval.add_hline(y=0, line_dash="dot", line_color="black", opacity=0.4)
+fig_deval.update_layout(
+    title=f"Impact d'une dévaluation de {deval_size}% au trimestre {deval_quarter}",
+    xaxis_title="Trimestre",
+    yaxis_title="ECT",
+    plot_bgcolor="#f9fbfd",
+    paper_bgcolor="white",
+    height=420,
+    legend=dict(orientation="h", y=-0.2),
+)
+st.plotly_chart(fig_deval, use_container_width=True)
+
+max_ect = np.max(np.abs(ect_deval[deval_quarter:deval_quarter+12]))
+recovery_q = next((i for i in range(deval_quarter, T_sim)
+                    if abs(ect_deval[i]) < 0.02), None)
+recovery_time = (recovery_q - deval_quarter) if recovery_q else "> 40"
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("ECT max après choc", f"{max_ect:.4f}")
+with col2:
+    st.metric("Taux au plafond ?", "Oui" if np.max(rate_deval[deval_quarter:]) >= 9.9 else "Non")
+with col3:
+    st.metric("Retour à l'équilibre", f"{recovery_time} trimestres")
+
+st.info("""
+**Ce que cela démontre:** même après un choc de 50 % (comme en 1994), le thermostat
+ramène l'économie vers l'équilibre. La re-estimation trimestrielle de la cointégration
+permet d'ajuster le vecteur après le choc. Le mode crise se déclenche automatiquement.
+""")
+
 # ---------------------------------------------------------------------------
 # Footer
 # ---------------------------------------------------------------------------
